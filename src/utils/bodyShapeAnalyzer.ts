@@ -1,4 +1,3 @@
-
 // Enhanced Body Shape Analysis with MediaPipe-style Pose Detection
 // Advanced Computer Vision Techniques for Accurate Body and Face Shape Detection
 
@@ -57,162 +56,262 @@ interface AnalysisResult {
   timestamp: string;
 }
 
-// Advanced Gaussian Blur for noise reduction
-const applyGaussianBlur = (imageData: ImageData, radius: number): ImageData => {
+// Advanced edge detection using Sobel operator
+const sobelEdgeDetection = (imageData: ImageData): ImageData => {
   const { data, width, height } = imageData;
   const output = new ImageData(width, height);
-  const sigma = radius / 3;
-  const kernel = generateGaussianKernel(radius, sigma);
   
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      let r = 0, g = 0, b = 0, a = 0, weightSum = 0;
+  // Sobel kernels
+  const sobelX = [[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]];
+  const sobelY = [[-1, -2, -1], [0, 0, 0], [1, 2, 1]];
+  
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      let gx = 0, gy = 0;
       
-      for (let ky = -radius; ky <= radius; ky++) {
-        for (let kx = -radius; kx <= radius; kx++) {
-          const nx = Math.max(0, Math.min(width - 1, x + kx));
-          const ny = Math.max(0, Math.min(height - 1, y + ky));
-          const idx = (ny * width + nx) * 4;
-          const weight = kernel[ky + radius][kx + radius];
+      for (let ky = -1; ky <= 1; ky++) {
+        for (let kx = -1; kx <= 1; kx++) {
+          const idx = ((y + ky) * width + (x + kx)) * 4;
+          const intensity = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
           
-          r += data[idx] * weight;
-          g += data[idx + 1] * weight;
-          b += data[idx + 2] * weight;
-          a += data[idx + 3] * weight;
-          weightSum += weight;
+          gx += intensity * sobelX[ky + 1][kx + 1];
+          gy += intensity * sobelY[ky + 1][kx + 1];
         }
       }
       
+      const magnitude = Math.sqrt(gx * gx + gy * gy);
       const outIdx = (y * width + x) * 4;
-      output.data[outIdx] = r / weightSum;
-      output.data[outIdx + 1] = g / weightSum;
-      output.data[outIdx + 2] = b / weightSum;
-      output.data[outIdx + 3] = a / weightSum;
+      output.data[outIdx] = magnitude;
+      output.data[outIdx + 1] = magnitude;
+      output.data[outIdx + 2] = magnitude;
+      output.data[outIdx + 3] = 255;
     }
   }
   
   return output;
 };
 
-const generateGaussianKernel = (radius: number, sigma: number): number[][] => {
-  const kernel: number[][] = [];
-  const size = radius * 2 + 1;
+// Convert to grayscale for better edge detection
+const toGrayscale = (imageData: ImageData): ImageData => {
+  const { data, width, height } = imageData;
+  const output = new ImageData(width, height);
   
-  for (let y = 0; y < size; y++) {
-    kernel[y] = [];
-    for (let x = 0; x < size; x++) {
-      const dx = x - radius;
-      const dy = y - radius;
-      kernel[y][x] = Math.exp(-(dx * dx + dy * dy) / (2 * sigma * sigma));
+  for (let i = 0; i < data.length; i += 4) {
+    const gray = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+    output.data[i] = gray;
+    output.data[i + 1] = gray;
+    output.data[i + 2] = gray;
+    output.data[i + 3] = data[i + 3];
+  }
+  
+  return output;
+};
+
+// Find body contours using edge detection
+const findBodyContour = (imageData: ImageData): Point[] => {
+  const { data, width, height } = imageData;
+  const contour: Point[] = [];
+  const threshold = 50;
+  
+  // Scan from left and right to find body edges
+  for (let y = 0; y < height; y += 2) {
+    let leftEdge = -1, rightEdge = -1;
+    
+    // Find left edge
+    for (let x = 0; x < width * 0.8; x++) {
+      const idx = (y * width + x) * 4;
+      const intensity = data[idx];
+      if (intensity > threshold) {
+        leftEdge = x;
+        break;
+      }
+    }
+    
+    // Find right edge
+    for (let x = width - 1; x > width * 0.2; x--) {
+      const idx = (y * width + x) * 4;
+      const intensity = data[idx];
+      if (intensity > threshold) {
+        rightEdge = x;
+        break;
+      }
+    }
+    
+    if (leftEdge !== -1 && rightEdge !== -1 && rightEdge - leftEdge > 20) {
+      contour.push(
+        { x: leftEdge, y, confidence: 0.8 },
+        { x: rightEdge, y, confidence: 0.8 }
+      );
     }
   }
   
-  return kernel;
+  return contour;
 };
 
-// MediaPipe-style pose landmark detection
+// Accurate shoulder detection using contour analysis
+const detectShoulders = (contour: Point[], height: number): { left: Point; right: Point } => {
+  const shoulderRegionStart = Math.floor(height * 0.12);
+  const shoulderRegionEnd = Math.floor(height * 0.25);
+  
+  let maxWidth = 0;
+  let bestShoulder = { left: { x: 0, y: 0, confidence: 0.5 }, right: { x: 0, y: 0, confidence: 0.5 } };
+  
+  // Find the widest point in shoulder region
+  for (let y = shoulderRegionStart; y < shoulderRegionEnd; y += 3) {
+    const pointsAtY = contour.filter(p => Math.abs(p.y - y) < 5);
+    if (pointsAtY.length >= 2) {
+      const leftMost = pointsAtY.reduce((min, p) => p.x < min.x ? p : min);
+      const rightMost = pointsAtY.reduce((max, p) => p.x > max.x ? p : max);
+      const width = rightMost.x - leftMost.x;
+      
+      if (width > maxWidth) {
+        maxWidth = width;
+        bestShoulder = {
+          left: { ...leftMost, confidence: 0.9 },
+          right: { ...rightMost, confidence: 0.9 }
+        };
+      }
+    }
+  }
+  
+  return bestShoulder;
+};
+
+// Accurate waist detection (narrowest point in torso)
+const detectWaist = (contour: Point[], height: number): { left: Point; right: Point } => {
+  const waistRegionStart = Math.floor(height * 0.35);
+  const waistRegionEnd = Math.floor(height * 0.55);
+  
+  let minWidth = Infinity;
+  let bestWaist = { left: { x: 0, y: 0, confidence: 0.5 }, right: { x: 0, y: 0, confidence: 0.5 } };
+  
+  // Find the narrowest point in waist region
+  for (let y = waistRegionStart; y < waistRegionEnd; y += 3) {
+    const pointsAtY = contour.filter(p => Math.abs(p.y - y) < 5);
+    if (pointsAtY.length >= 2) {
+      const leftMost = pointsAtY.reduce((min, p) => p.x < min.x ? p : min);
+      const rightMost = pointsAtY.reduce((max, p) => p.x > max.x ? p : max);
+      const width = rightMost.x - leftMost.x;
+      
+      if (width < minWidth && width > 20) {
+        minWidth = width;
+        bestWaist = {
+          left: { ...leftMost, confidence: 0.85 },
+          right: { ...rightMost, confidence: 0.85 }
+        };
+      }
+    }
+  }
+  
+  return bestWaist;
+};
+
+// Accurate hip detection (widest point in lower torso)
+const detectHips = (contour: Point[], height: number): { left: Point; right: Point } => {
+  const hipRegionStart = Math.floor(height * 0.55);
+  const hipRegionEnd = Math.floor(height * 0.75);
+  
+  let maxWidth = 0;
+  let bestHips = { left: { x: 0, y: 0, confidence: 0.5 }, right: { x: 0, y: 0, confidence: 0.5 } };
+  
+  // Find the widest point in hip region
+  for (let y = hipRegionStart; y < hipRegionEnd; y += 3) {
+    const pointsAtY = contour.filter(p => Math.abs(p.y - y) < 5);
+    if (pointsAtY.length >= 2) {
+      const leftMost = pointsAtY.reduce((min, p) => p.x < min.x ? p : min);
+      const rightMost = pointsAtY.reduce((max, p) => p.x > max.x ? p : max);
+      const width = rightMost.x - leftMost.x;
+      
+      if (width > maxWidth) {
+        maxWidth = width;
+        bestHips = {
+          left: { ...leftMost, confidence: 0.9 },
+          right: { ...rightMost, confidence: 0.9 }
+        };
+      }
+    }
+  }
+  
+  return bestHips;
+};
+
+// Enhanced face detection using skin tone and facial features
+const detectFaceAccurate = (imageData: ImageData, width: number, height: number): { top: Point; bottom: Point; left: Point; right: Point } => {
+  const { data } = imageData;
+  const faceRegionStart = Math.floor(height * 0.05);
+  const faceRegionEnd = Math.floor(height * 0.35);
+  
+  let facePixels: Point[] = [];
+  
+  // Detect face using skin tone analysis
+  for (let y = faceRegionStart; y < faceRegionEnd; y += 2) {
+    for (let x = Math.floor(width * 0.25); x < Math.floor(width * 0.75); x += 2) {
+      const idx = (y * width + x) * 4;
+      const r = data[idx];
+      const g = data[idx + 1];
+      const b = data[idx + 2];
+      
+      // Enhanced skin tone detection
+      if (r > 95 && g > 40 && b > 20 && 
+          Math.max(r, g, b) - Math.min(r, g, b) > 15 &&
+          Math.abs(r - g) > 15 && r > g && r > b) {
+        facePixels.push({ x, y, confidence: 0.8 });
+      }
+    }
+  }
+  
+  if (facePixels.length === 0) {
+    // Fallback to center region
+    const centerX = Math.floor(width * 0.5);
+    return {
+      top: { x: centerX, y: Math.floor(height * 0.08), confidence: 0.5 },
+      bottom: { x: centerX, y: Math.floor(height * 0.25), confidence: 0.5 },
+      left: { x: Math.floor(width * 0.35), y: Math.floor(height * 0.16), confidence: 0.5 },
+      right: { x: Math.floor(width * 0.65), y: Math.floor(height * 0.16), confidence: 0.5 }
+    };
+  }
+  
+  // Find face boundaries
+  const leftMost = facePixels.reduce((min, p) => p.x < min.x ? p : min);
+  const rightMost = facePixels.reduce((max, p) => p.x > max.x ? p : max);
+  const topMost = facePixels.reduce((min, p) => p.y < min.y ? p : min);
+  const bottomMost = facePixels.reduce((max, p) => p.y > max.y ? p : max);
+  
+  return {
+    top: { ...topMost, confidence: 0.85 },
+    bottom: { ...bottomMost, confidence: 0.85 },
+    left: { ...leftMost, confidence: 0.85 },
+    right: { ...rightMost, confidence: 0.85 }
+  };
+};
+
+// Enhanced pose landmark detection with accurate body part identification
 const detectPoseLandmarks = (canvas: HTMLCanvasElement): PoseLandmarks => {
   const ctx = canvas.getContext('2d')!;
   const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const blurred = applyGaussianBlur(imageData, 2);
   
-  const { width, height } = canvas;
+  // Convert to grayscale and apply edge detection
+  const grayscale = toGrayscale(imageData);
+  const edges = sobelEdgeDetection(grayscale);
   
-  // Advanced anatomical landmark detection
-  const shoulderY = Math.floor(height * 0.18);
-  const waistY = Math.floor(height * 0.48);
-  const hipY = Math.floor(height * 0.68);
-  const faceTop = Math.floor(height * 0.08);
-  const faceBottom = Math.floor(height * 0.25);
+  // Find body contour
+  const contour = findBodyContour(edges);
   
-  // Use gradient analysis for more accurate edge detection
-  const shoulders = detectHorizontalLandmarks(blurred, shoulderY, width);
-  const waist = detectHorizontalLandmarks(blurred, waistY, width);
-  const hips = detectHorizontalLandmarks(blurred, hipY, width);
-  const face = detectFaceLandmarks(blurred, faceTop, faceBottom, width);
+  console.log('Detected contour points:', contour.length);
   
-  return {
-    shoulders: {
-      left: { x: shoulders.left, y: shoulderY, confidence: shoulders.confidence },
-      right: { x: shoulders.right, y: shoulderY, confidence: shoulders.confidence }
-    },
-    waist: {
-      left: { x: waist.left, y: waistY, confidence: waist.confidence },
-      right: { x: waist.right, y: waistY, confidence: waist.confidence }
-    },
-    hips: {
-      left: { x: hips.left, y: hipY, confidence: hips.confidence },
-      right: { x: hips.right, y: hipY, confidence: hips.confidence }
-    },
-    face: {
-      top: { x: face.centerX, y: face.top, confidence: face.confidence },
-      bottom: { x: face.centerX, y: face.bottom, confidence: face.confidence },
-      left: { x: face.left, y: face.centerY, confidence: face.confidence },
-      right: { x: face.right, y: face.centerY, confidence: face.confidence }
-    }
-  };
-};
-
-const detectHorizontalLandmarks = (imageData: ImageData, y: number, width: number) => {
-  const { data } = imageData;
-  let left = -1, right = -1;
-  const threshold = 100;
+  // Detect body parts using contour analysis
+  const shoulders = detectShoulders(contour, canvas.height);
+  const waist = detectWaist(contour, canvas.height);
+  const hips = detectHips(contour, canvas.height);
+  const face = detectFaceAccurate(imageData, canvas.width, canvas.height);
   
-  // Detect left edge
-  for (let x = 0; x < width; x++) {
-    const idx = (y * width + x) * 4;
-    const intensity = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
-    if (intensity < threshold) {
-      left = x;
-      break;
-    }
-  }
-  
-  // Detect right edge
-  for (let x = width - 1; x >= 0; x--) {
-    const idx = (y * width + x) * 4;
-    const intensity = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
-    if (intensity < threshold) {
-      right = x;
-      break;
-    }
-  }
+  console.log('Detected landmarks:', { shoulders, waist, hips, face });
   
   return {
-    left: left !== -1 ? left : width * 0.3,
-    right: right !== -1 ? right : width * 0.7,
-    confidence: (left !== -1 && right !== -1) ? 0.9 : 0.6
-  };
-};
-
-const detectFaceLandmarks = (imageData: ImageData, top: number, bottom: number, width: number) => {
-  const { data, height } = imageData;
-  const centerY = Math.floor((top + bottom) / 2);
-  let left = -1, right = -1;
-  const threshold = 120;
-  
-  // Face detection using skin tone analysis
-  for (let x = Math.floor(width * 0.25); x < Math.floor(width * 0.75); x++) {
-    const idx = (centerY * width + x) * 4;
-    const r = data[idx];
-    const g = data[idx + 1];
-    const b = data[idx + 2];
-    
-    // Skin tone detection heuristic
-    if (r > 95 && g > 40 && b > 20 && r > g && r > b && Math.abs(r - g) > 15) {
-      if (left === -1) left = x;
-      right = x;
-    }
-  }
-  
-  return {
-    top,
-    bottom,
-    left: left !== -1 ? left : width * 0.35,
-    right: right !== -1 ? right : width * 0.65,
-    centerX: Math.floor(width * 0.5),
-    centerY,
-    confidence: (left !== -1 && right !== -1) ? 0.85 : 0.5
+    shoulders,
+    waist,
+    hips,
+    face
   };
 };
 
