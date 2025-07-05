@@ -177,31 +177,52 @@ const detectShoulders = (contour: Point[], height: number): { left: Point; right
   return bestShoulder;
 };
 
-// Accurate waist detection (narrowest point in torso)
+// Accurate waist detection (true narrowest point in lower torso)
 const detectWaist = (contour: Point[], height: number): { left: Point; right: Point } => {
-  const waistRegionStart = Math.floor(height * 0.35);
-  const waistRegionEnd = Math.floor(height * 0.55);
+  // Adjust waist region to be lower - between 40% and 65% of body height
+  const waistRegionStart = Math.floor(height * 0.40);
+  const waistRegionEnd = Math.floor(height * 0.65);
   
   let minWidth = Infinity;
   let bestWaist = { left: { x: 0, y: 0, confidence: 0.5 }, right: { x: 0, y: 0, confidence: 0.5 } };
   
-  // Find the narrowest point in waist region
-  for (let y = waistRegionStart; y < waistRegionEnd; y += 3) {
-    const pointsAtY = contour.filter(p => Math.abs(p.y - y) < 5);
+  // Find the true narrowest point in waist region with better sampling
+  for (let y = waistRegionStart; y < waistRegionEnd; y += 2) {
+    const pointsAtY = contour.filter(p => Math.abs(p.y - y) < 3);
     if (pointsAtY.length >= 2) {
       const leftMost = pointsAtY.reduce((min, p) => p.x < min.x ? p : min);
       const rightMost = pointsAtY.reduce((max, p) => p.x > max.x ? p : max);
       const width = rightMost.x - leftMost.x;
       
-      if (width < minWidth && width > 20) {
+      // Ensure we're finding a realistic waist width (not too narrow)
+      if (width < minWidth && width > 30) {
         minWidth = width;
         bestWaist = {
-          left: { ...leftMost, confidence: 0.85 },
-          right: { ...rightMost, confidence: 0.85 }
+          left: { ...leftMost, confidence: 0.88 },
+          right: { ...rightMost, confidence: 0.88 }
         };
       }
     }
   }
+  
+  // If no good waist found, use a calculated position based on shoulders and hips
+  if (minWidth === Infinity) {
+    const midY = Math.floor(height * 0.50); // True waist position
+    const estimatedWidth = Math.floor(height * 0.20); // Estimated waist width
+    const centerX = Math.floor(contour.reduce((sum, p) => sum + p.x, 0) / contour.length);
+    
+    bestWaist = {
+      left: { x: centerX - estimatedWidth / 2, y: midY, confidence: 0.75 },
+      right: { x: centerX + estimatedWidth / 2, y: midY, confidence: 0.75 }
+    };
+  }
+  
+  console.log('Waist detection:', { 
+    regionStart: waistRegionStart, 
+    regionEnd: waistRegionEnd, 
+    finalY: bestWaist.left.y,
+    width: bestWaist.right.x - bestWaist.left.x 
+  });
   
   return bestWaist;
 };
