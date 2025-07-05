@@ -4,7 +4,7 @@ import { useDropzone } from 'react-dropzone';
 import { Upload, Image as ImageIcon, X } from 'lucide-react';
 
 interface ImageUploaderProps {
-  onImageSelect: (file: File) => void;
+  onImageSelect: (file: File | null) => void;
   selectedImage: File | null;
   imagePreview: string | null;
 }
@@ -40,7 +40,7 @@ export const ImageUploader = ({ onImageSelect, selectedImage, imagePreview }: Im
         </div>
         <button
           onClick={() => {
-            onImageSelect(null as any);
+            onImageSelect(null);
           }}
           className="absolute top-2 right-2 bg-red-500 hover:bg-red-600 text-white rounded-full p-1 shadow-lg transition-colors"
         >

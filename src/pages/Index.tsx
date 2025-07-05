@@ -29,7 +29,15 @@ const Index = () => {
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
 
-  const handleImageSelect = (file: File) => {
+  const handleImageSelect = (file: File | null) => {
+    if (!file) {
+      // Clear all states when removing image
+      setSelectedImage(null);
+      setImagePreview(null);
+      setAnalysisResult(null);
+      return;
+    }
+
     setSelectedImage(file);
     setAnalysisResult(null);
     
